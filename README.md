@@ -1,3 +1,3 @@
 # minrogeryt
 
-descargar el repositorio en zip,extraer zip,y abrir desde navegador el index.html
+descargar el repositorio en zip,extraer zip,y abrir la version que quieras,despues abre desde navegador el index.html
