@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minroger 2D - Aventura RPG + Gatobloque Event</title>
+<style>
+    body {
+        margin: 0; overflow: hidden; background: #000;
+        font-family: 'Courier New', Courier, monospace; user-select: none;
+    }
+    canvas { display: block; image-rendering: pixelated; }
+    
+    /* Interfaz de Vida y Botones Especiales */
+    #health-bar-container {
+        position: fixed; top: 20px; left: 20px;
+        width: 200px; height: 25px; background: #333;
+        border: 3px solid #000; border-radius: 5px; box-shadow: 0 0 5px black;
+    }
+    #health-fill {
+        width: 100%; height: 100%; background: #ff3333;
+        transition: width 0.2s ease-in-out;
+    }
+    #health-text {
+        position: absolute; top: 3px; left: 0; width: 100%;
+        text-align: center; color: white; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 0 #000;
+    }
+
+    #tester-btn {
+        position: fixed; top: 55px; left: 20px;
+        background: rgba(0,0,0,0.6); color: white; border: 2px solid #555;
+        padding: 5px 10px; border-radius: 5px; cursor: pointer; font-family: inherit; font-weight: bold;
+    }
+    #tester-btn:hover { background: rgba(50,50,50,0.8); }
+
+    /* Interfaz de Inventario */
+    #ui-container {
+        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 5px; background: rgba(0, 0, 0, 0.7);
+        padding: 10px; border-radius: 5px; border: 2px solid #555;
+    }
+    .hotbar-slot {
+        width: 48px; height: 48px; border: 2px solid #888;
+        background: rgba(100, 100, 100, 0.5); display: flex;
+        align-items: center; justify-content: center; position: relative;
+    }
+    .hotbar-slot.active { border-color: #FFF; box-shadow: 0 0 10px white; background: rgba(200, 200, 200, 0.5); }
+    .hotbar-slot img { max-width: 36px; max-height: 36px; }
+    .hotbar-number { position: absolute; top: 2px; left: 4px; font-size: 12px; color: white; font-weight: bold; text-shadow: 1px 1px 0 #000; }
+    .item-count { position: absolute; bottom: 2px; right: 4px; font-size: 14px; color: white; font-weight: bold; text-shadow: 1px 1px 0 #000; }
+    
+    /* Menú Crafteo */
+    #crafting-menu {
+        display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.9); border: 4px solid #555; padding: 20px;
+        color: white; border-radius: 10px; width: 400px; max-height: 80vh; overflow-y: auto;
+    }
+    #crafting-menu h2 { margin-top: 0; text-align: center; }
+    .recipe {
+        display: flex; justify-content: space-between; align-items: center;
+        background: #333; margin-bottom: 10px; padding: 10px; border-radius: 5px; border: 1px solid #777;
+    }
+    .recipe-reqs { font-size: 12px; color: #CCC; }
+    .craft-btn { background: #4CAF50; color: white; border: none; padding: 8px 15px; cursor: pointer; border-radius: 3px; font-weight: bold; }
+    .craft-btn:disabled { background: #555; cursor: not-allowed; }
+    .craft-btn:hover:not(:disabled) { background: #45a049; }
+    
+    #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 24px; text-align: center; }
+    #controls {
+        position: fixed; top: 10px; right: 10px; color: white;
+        background: rgba(0,0,0,0.5); padding: 10px; font-size: 12px; border-radius: 5px; text-align: right; pointer-events: none;
+    }
+</style>
+</head>
+<body>
+
+<div id="loading">Cargando Mundo de Minroger...<br><span style="font-size:14px">(Click en la pantalla si falta audio luego)</span></div>
+<canvas id="game"></canvas>
+
+<div id="health-bar-container">
+    <div id="health-fill"></div>
+    <div id="health-text">10 / 10</div>
+</div>
+<button id="tester-btn">Modo Tester</button>
+
+<div id="ui-container"></div>
+
+<div id="crafting-menu">
+    <h2>Fabricación</h2>
+    <div id="recipes-container"></div>
+    <p style="text-align:center; font-size:12px; color:#aaa;">Pulsa 'E' para cerrar</p>
+</div>
+
+<div id="controls">
+    <b>Controles:</b><br>
+    A/D: Mover | Espacio: Saltar<br>
+    <b>Mantener</b> Click Izq: Minar<br>
+    Click Izq (Ente): Atacar<br>
+    Click Der: Poner Bloque<br>
+    <b>E: Crafteo</b> | 1-9: Inventario<br>
+    G: Guardar | C: Cargar
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+
+const TILE = 48;
+const WORLD_WIDTH = 400; 
+const WORLD_HEIGHT = 60;
+
+// SISTEMA DE AUDIO
+const musicGato = new Audio('assets/musicagatocielo.mp3');
+musicGato.loop = true;
+musicGato.volume = 0.5;
+
+const imageSrcs = {
+    jugador: 'assets/jugador.png',
+    picomadera: 'assets/picomadera.png',
+    picopiedra: 'assets/picopiedra.png',
+    espadamadera: 'assets/espadamadera.png',
+    bloquepiedra: 'assets/bloquepiedra.jpg',
+    palomadera: 'assets/palomadera.png',
+    bloquetablon: 'assets/bloquetablon.jpg',
+    bloquemadera: 'assets/bloquemadera.jpg',
+    cielo: 'assets/cielo.png',
+    cielogato: 'assets/cielogato.png', 
+    hoja: 'assets/hoja.png',
+    bloquepasto: 'assets/bloquepasto.png',
+    bloquetierra: 'assets/bloquetierra.png',
+    cerdo: 'assets/cerdo.png',
+    pollo: 'assets/pollo.png',
+    nomo: 'assets/nomo.png', 
+    gato: 'assets/gato_unicornio.png', 
+    aldeano: 'assets/aldeano.png', 
+    gatobloque: 'assets/gatobloque.png' 
+};
+
+const images = {};
+let imagesLoaded = 0;
+const totalImages = Object.keys(imageSrcs).length;
+
+const items = {
+    0: { name: "Aire", key: null, isBlock: false },
+    1: { name: "Pasto", key: 'bloquepasto', isBlock: true },
+    2: { name: "Tierra", key: 'bloquetierra', isBlock: true },
+    3: { name: "Piedra", key: 'bloquepiedra', isBlock: true },
+    4: { name: "Madera", key: 'bloquemadera', isBlock: true },
+    5: { name: "Hojas", key: 'hoja', isBlock: true },
+    6: { name: "Tablón", key: 'bloquetablon', isBlock: true },
+    7: { name: "Pico Madera", key: 'picomadera', isBlock: false, maxStack: 1 },
+    8: { name: "Pico Piedra", key: 'picopiedra', isBlock: false, maxStack: 1 },
+    9: { name: "Palo", key: 'palomadera', isBlock: false },
+    10: { name: "Espada Madera", key: 'espadamadera', isBlock: false, maxStack: 1 },
+    11: { name: "Bloque Gato", key: 'gatobloque', isBlock: true }
+};
+
+let inventory = Array.from({length: 9}, () => ({ id: 0, count: 0 }));
+let selectedSlot = 0; 
+let isCraftingOpen = false;
+let world = [];
+let entities = []; 
+
+// MODO TESTER
+let isTesterMode = false;
+
+document.getElementById("tester-btn").addEventListener("click", () => {
+    if (!isTesterMode) {
+        let pwd = prompt("Introduce la contraseña para activar el Modo Tester:");
+        if (pwd === "0102") {
+            isTesterMode = true;
+            document.getElementById("tester-btn").style.background = "gold";
+            document.getElementById("tester-btn").style.color = "black";
+            alert("Modo Tester ACTIVADO. ¡Ahora puedes volar con W/A/S/D o las flechas!");
+        } else if (pwd !== null) {
+            alert("Contraseña incorrecta.");
+        }
+    } else {
+        isTesterMode = false;
+        document.getElementById("tester-btn").style.background = "rgba(0,0,0,0.6)";
+        document.getElementById("tester-btn").style.color = "white";
+        alert("Modo Tester DESACTIVADO.");
+    }
+});
+
+// EVENTO GATO
+let isCatEventActive = false;
+let catEventTimer = 0;
+
+let player = { 
+    x: 100, y: 100, width: 36, height: 72, 
+    dx: 0, dy: 0, speed: 6, jump: -12, 
+    grounded: false, facingLeft: false,
+    hp: 10, maxHp: 10, invuln: 0 
+};
+
+const recipes = [
+    { result: { id: 6, count: 4 }, reqs: [{ id: 4, count: 1 }] },
+    { result: { id: 9, count: 4 }, reqs: [{ id: 6, count: 2 }] },
+    { result: { id: 7, count: 1 }, reqs: [{ id: 6, count: 3 }, { id: 9, count: 2 }] },
+    { result: { id: 8, count: 1 }, reqs: [{ id: 3, count: 3 }, { id: 9, count: 2 }] },
+    { result: { id: 10, count: 1 }, reqs: [{ id: 6, count: 2 }, { id: 9, count: 1 }] }
+];
+
+for (let key in imageSrcs) {
+    images[key] = new Image();
+    images[key].src = imageSrcs[key];
+    images[key].onload = () => {
+        imagesLoaded++;
+        if (imagesLoaded === totalImages) {
+            document.getElementById("loading").style.display = "none";
+            initGame();
+        }
+    };
+}
+
+function buildHouse(bx, by) {
+    for(let i=0; i<7; i++) world[by][bx+i] = 3; 
+    for(let h=1; h<=3; h++) { world[by-h][bx] = 4; world[by-h][bx+6] = 4; } 
+    for(let i=-1; i<8; i++) world[by-4][bx+i] = 6; 
+    world[by-1][bx+3] = 0; world[by-2][bx+3] = 0; 
+}
+
+function buildVillage(baseX, terrainY) {
+    buildHouse(baseX, terrainY);
+    buildHouse(baseX + 12, terrainY);
+    for(let i=0; i<3; i++) {
+        entities.push({
+            type: 'aldeano', x: (baseX + 3 + i*5) * TILE, y: (terrainY - 2) * TILE,
+            width: 32, height: 64, dx: 0, dy: 0, speed: 1, hp: 10,
+            facingLeft: false, stateTimer: 0, action: 0, followTimer: 0
+        });
+    }
+}
+
+function generateWorld() {
+    let terrainHeight = 30;
+    for (let y = 0; y < WORLD_HEIGHT; y++) {
+        world[y] = [];
+        for (let x = 0; x < WORLD_WIDTH; x++) {
+            if (y > terrainHeight + 3) world[y][x] = 3;
+            else if (y > terrainHeight) world[y][x] = 2;
+            else if (y === terrainHeight) world[y][x] = 1;
+            else world[y][x] = 0;
+        }
+    }
+    
+    entities = []; 
+
+    for (let x = 10; x < WORLD_WIDTH - 10; x++) {
+        if (x % 100 === 0 && x > 20) {
+            buildVillage(x, terrainHeight);
+            x += 20; 
+            continue;
+        }
+        
+        if (x % 150 === 0 && x > 20) {
+            world[terrainHeight-1][x] = 11; 
+            continue;
+        }
+
+        if (Math.random() < 0.1) {
+            let y = terrainHeight - 1;
+            world[y][x] = 4; world[y-1][x] = 4; world[y-2][x] = 4;
+            world[y-3][x] = 5; world[y-4][x] = 5; world[y-3][x-1] = 5; world[y-3][x+1] = 5; world[y-2][x-1] = 5; world[y-2][x+1] = 5;
+            x += 2;
+        } 
+        else if (Math.random() < 0.12) {
+            let rand = Math.random();
+            let type = rand < 0.3 ? 'nomo' : (rand < 0.5 ? 'gato' : (rand < 0.75 ? 'cerdo' : 'pollo'));
+            
+            let w = 24, h = 24, s = 1, hp = 1;
+            if(type === 'cerdo') { w = 44; h = 32; hp = 2; }
+            if(type === 'nomo') { w = 32; h = 44; s = 2; hp = 4; }
+            if(type === 'gato') { s = 2; hp = 3; }
+
+            entities.push({
+                type: type, x: x * TILE, y: (terrainHeight - 2) * TILE,
+                width: w, height: h, dx: 0, dy: 0, speed: s, hp: hp,
+                facingLeft: Math.random() < 0.5, stateTimer: 0, action: 0, followTimer: 0, dmgCooldown: 0
+            });
+        }
+    }
+}
+
+const gravity = 0.6;
+let camera = { x: 0, y: 0 };
+let keys = {};
+let mouse = { x: 0, y: 0, isDown: false };
+let mining = { active: false, x: -1, y: -1, progress: 0, required: 0 };
+
+function getCollisions(x, y, w, h) {
+    let tiles = [];
+    let left = Math.floor(x / TILE), right = Math.floor((x + w - 1) / TILE);
+    let top = Math.floor(y / TILE), bottom = Math.floor((y + h - 1) / TILE);
+    for (let ty = top; ty <= bottom; ty++) {
+        for (let tx = left; tx <= right; tx++) {
+            if (ty >= 0 && ty < WORLD_HEIGHT && tx >= 0 && tx < WORLD_WIDTH && world[ty][tx] !== 0) {
+                tiles.push({x: tx, y: ty, id: world[ty][tx]});
+            }
+        }
+    }
+    return tiles;
+}
+
+function triggerCatEvent(x, y) {
+    isCatEventActive = true;
+    catEventTimer = 3600; 
+    
+    musicGato.currentTime = 0; 
+    musicGato.play().catch(e => console.log("El navegador bloqueó el autoplay."));
+
+    for(let i=0; i<10; i++) {
+        entities.push({
+            type: 'gato', x: x + (Math.random()*60-30), y: y - 40,
+            width: 24, height: 24, dx: 0, dy: 0, speed: 4, hp: 5,
+            facingLeft: false, stateTimer: 0, action: 0, followTimer: catEventTimer, dmgCooldown: 0
+        });
+    }
+    
+    let title = document.createElement("div");
+    title.innerText = "¡LA INVASIÓN DEL GATO UNICORNIO!";
+    title.style.cssText = "position:fixed; top:20%; left:50%; transform:translateX(-50%); color:magenta; font-size:40px; font-weight:bold; text-shadow:2px 2px 0 black, 0 0 10px pink; z-index:1000;";
+    document.body.appendChild(title);
+    setTimeout(() => title.remove(), 4000);
+}
+
+function endCatEvent() {
+    isCatEventActive = false;
+    musicGato.pause();
+    musicGato.currentTime = 0;
+}
+
+function checkSpecialBlocks() {
+    let left = Math.floor(player.x / TILE), right = Math.floor((player.x + player.width) / TILE);
+    let top = Math.floor(player.y / TILE), bottom = Math.floor((player.y + player.height) / TILE);
+    for (let ty = top; ty <= bottom; ty++) {
+        for (let tx = left; tx <= right; tx++) {
+            if (world[ty] && world[ty][tx] === 11) { 
+                world[ty][tx] = 0; 
+                triggerCatEvent(player.x, player.y);
+            }
+        }
+    }
+}
+
+function updateHealthUI() {
+    let p = Math.max(0, (player.hp / player.maxHp) * 100);
+    document.getElementById("health-fill").style.width = p + "%";
+    document.getElementById("health-text").innerText = `${Math.max(0, player.hp)} / ${player.maxHp}`;
+}
+
+function die() {
+    player.hp = player.maxHp;
+    player.x = 100;
+    player.y = 100;
+    player.dx = 0; player.dy = 0;
+    updateHealthUI();
+    alert("¡Has muerto! Los nomos han acabado contigo. Reapareciendo...");
+}
+
+function updatePlayer() {
+    if(isCraftingOpen) return;
+    if(player.invuln > 0) player.invuln--;
+
+    player.dx = 0;
+    
+    // Si està volant, no hi ha inèrcia de caiguda.
+    if(isTesterMode) player.dy = 0; 
+
+    // Moviment Horizontal
+    if (keys["a"] || keys["arrowleft"]) { player.dx = -player.speed; player.facingLeft = true; }
+    if (keys["d"] || keys["arrowright"]) { player.dx = player.speed; player.facingLeft = false; }
+
+    // FÍSICAS MODO TESTER vs MODO NORMAL
+    if (isTesterMode) {
+        // Volar amunt i avall
+        if (keys["w"] || keys["arrowup"] || keys[" "]) { player.dy = -player.speed; }
+        if (keys["s"] || keys["arrowdown"]) { player.dy = player.speed; }
+    } else {
+        // Saltar i caure normalment
+        if ((keys[" "] || keys["w"] || keys["arrowup"]) && player.grounded) { 
+            player.dy = player.jump; 
+            player.grounded = false; 
+        }
+        player.dy += gravity;
+        if(player.dy > 18) player.dy = 18;
+    }
+
+    // Aplicar Física X i col·lisions
+    player.x += player.dx;
+    let colX = getCollisions(player.x, player.y, player.width, player.height);
+    if (colX.length > 0) {
+        if (player.dx > 0) player.x = colX[0].x * TILE - player.width;
+        else if (player.dx < 0) player.x = (colX[0].x + 1) * TILE;
+    }
+
+    // Aplicar Física Y i col·lisions
+    player.y += player.dy;
+    player.grounded = false;
+    let colY = getCollisions(player.x, player.y, player.width, player.height);
+    if (colY.length > 0) {
+        if (player.dy > 0) { player.y = colY[0].y * TILE - player.height; player.dy = 0; player.grounded = true; } 
+        else if (player.dy < 0) { player.y = (colY[0].y + 1) * TILE; player.dy = 0; }
+    }
+    
+    if (player.x < 0) player.x = 0;
+    if (player.x > WORLD_WIDTH * TILE - player.width) player.x = WORLD_WIDTH * TILE - player.width;
+    
+    checkSpecialBlocks();
+    if(player.y > WORLD_HEIGHT * TILE + 200) die(); 
+
+    if (isCatEventActive) {
+        catEventTimer--;
+        if (catEventTimer <= 0) {
+            endCatEvent();
+        }
+    }
+}
+
+function updateEntities() {
+    for (let i = entities.length - 1; i >= 0; i--) {
+        let e = entities[i];
+        if(e.dmgCooldown > 0) e.dmgCooldown--;
+        
+        let dxToPlayer = player.x - e.x;
+        let dist = Math.abs(dxToPlayer);
+
+        if (e.type === 'nomo') {
+            if (dist < 350) { 
+                e.action = dxToPlayer > 0 ? 2 : 1;
+                e.speed = 3.5; 
+                // En Modo Tester els nomos NO fan mal
+                if (dist < 40 && Math.abs(player.y - e.y) < 50 && player.invuln <= 0 && !isTesterMode) {
+                    player.hp -= 2; player.invuln = 60; updateHealthUI();
+                    player.dy = -5; player.x += dxToPlayer > 0 ? -20 : 20; 
+                    if (player.hp <= 0) die();
+                }
+            } else { e.speed = 1.5; }
+        } 
+        else if (e.type === 'gato' && e.followTimer > 0) {
+            if(!isCatEventActive) e.followTimer = 0; 
+            else e.followTimer = catEventTimer;
+
+            if (dist > 80 && dist < 1000) {
+                e.action = dxToPlayer > 0 ? 2 : 1;
+                e.speed = 4.5; 
+                if (Math.random() < 0.05 && e.dy === 0) e.dy = -8; 
+            } else { e.action = 0; } 
+        }
+
+        if (!(e.type === 'nomo' && dist < 350) && !(e.type === 'gato' && e.followTimer > 0 && dist > 80)) {
+            e.stateTimer--;
+            if (e.stateTimer <= 0) {
+                e.action = Math.floor(Math.random() * 3);
+                e.stateTimer = 60 + Math.random() * 120;
+                if (e.action > 0 && Math.random() < 0.2) e.dy = -8;
+            }
+        }
+
+        e.dx = 0;
+        if (e.action === 1) { e.dx = -e.speed; e.facingLeft = true; }
+        if (e.action === 2) { e.dx = e.speed; e.facingLeft = false; }
+
+        e.dy += gravity;
+        if(e.dy > 18) e.dy = 18;
+
+        e.x += e.dx;
+        let colX = getCollisions(e.x, e.y, e.width, e.height);
+        if (colX.length > 0) {
+            if (e.dx > 0) e.x = colX[0].x * TILE - e.width;
+            else if (e.dx < 0) e.x = (colX[0].x + 1) * TILE;
+            e.dy = -6; e.action = e.action === 1 ? 2 : 1;
+        }
+
+        e.y += e.dy;
+        let colY = getCollisions(e.x, e.y, e.width, e.height);
+        if (colY.length > 0) {
+            if (e.dy > 0) { e.y = colY[0].y * TILE - e.height; e.dy = 0; }
+            else if (e.dy < 0) { e.y = (colY[0].y + 1) * TILE; e.dy = 0; }
+        }
+
+        if (e.y > WORLD_HEIGHT * TILE + 100) entities.splice(i, 1);
+    }
+}
+
+function updateCamera() {
+    camera.x += (player.x - canvas.width / 2 + player.width / 2 - camera.x) * 0.1;
+    camera.y += (player.y - canvas.height / 2 + player.height / 2 - camera.y) * 0.1;
+    if(camera.x < 0) camera.x = 0;
+    if(camera.x > WORLD_WIDTH * TILE - canvas.width) camera.x = WORLD_WIDTH * TILE - canvas.width;
+    if(camera.y > WORLD_HEIGHT * TILE - canvas.height) camera.y = WORLD_HEIGHT * TILE - canvas.height;
+}
+
+function getMineFrames(b, t) {
+    // Si ets tester, instamines gairebé tot!
+    if (isTesterMode) return 1; 
+
+    let f = 60; 
+    if(b===1||b===2) f=30; else if(b===4||b===6) f=90; else if(b===5) f=15; else if(b===3) f=240; else if(b===11) f=10;
+    if(t===7&&b===3) f=90; else if(t===8&&b===3) f=45; else if(t===10&&b===5) f=5;
+    return f;
+}
+
+function updateMining() {
+    if (!mouse.isDown || isCraftingOpen) { mining.active = false; mining.progress = 0; return; }
+    let wx = Math.floor((mouse.x + camera.x) / TILE), wy = Math.floor((mouse.y + camera.y) / TILE);
+    let dist = Math.sqrt(Math.pow(wx*TILE - player.x, 2) + Math.pow(wy*TILE - player.y, 2));
+
+    if (wy>=0 && wy<WORLD_HEIGHT && wx>=0 && wx<WORLD_WIDTH && dist<250) {
+        let block = world[wy][wx];
+        if (block !== 0) {
+            let heldItem = inventory[selectedSlot].id;
+            if (mining.x !== wx || mining.y !== wy) {
+                mining.x = wx; mining.y = wy; mining.progress = 0; mining.required = getMineFrames(block, heldItem); mining.active = true;
+            } else {
+                mining.progress++;
+                if (mining.progress >= mining.required) {
+                    if (block === 11) { triggerCatEvent(wx*TILE, wy*TILE); }
+                    else {
+                        let drop = 0;
+                        if(block===1||block===2) drop=2; else if(block===4) drop=4; else if(block===5) drop=0;
+                        else if(block===3) { if(heldItem===7||heldItem===8) drop=3; } else drop=block;
+                        if (drop!==0) addItem(drop, 1);
+                    }
+                    world[wy][wx] = 0; mining.active = false; mining.progress = 0;
+                }
+            }
+        } else mining.active = false;
+    } else mining.active = false;
+}
+
+function addItem(id, count) {
+    let maxStack = items[id].maxStack || 64;
+    for(let i=0; i<9; i++) if(inventory[i].id === id && inventory[i].count < maxStack) { let space = maxStack - inventory[i].count; if(count <= space) { inventory[i].count += count; updateUI(); return true; } else { inventory[i].count = maxStack; count -= space; } }
+    for(let i=0; i<9; i++) if(inventory[i].id === 0) { inventory[i].id = id; inventory[i].count = count; updateUI(); return true; }
+    return false;
+}
+function countItem(id) { return inventory.reduce((t, s) => s.id === id ? t + s.count : t, 0); }
+function removeItems(id, amount) {
+    let r = amount;
+    for(let i=8; i>=0; i--) if(inventory[i].id === id) { if(inventory[i].count > r) { inventory[i].count -= r; return; } else { r -= inventory[i].count; inventory[i].id = 0; inventory[i].count = 0; } }
+}
+function canCraft(recipe) { return recipe.reqs.every(req => countItem(req.id) >= req.count); }
+function craft(index) {
+    let r = recipes[index];
+    if(canCraft(r)) { r.reqs.forEach(req => removeItems(req.id, req.count)); addItem(r.result.id, r.result.count); updateCraftingMenu(); updateUI(); }
+}
+function toggleCrafting() {
+    isCraftingOpen = !isCraftingOpen;
+    document.getElementById("crafting-menu").style.display = isCraftingOpen ? "block" : "none";
+    if(isCraftingOpen) updateCraftingMenu();
+}
+function updateCraftingMenu() {
+    const c = document.getElementById("recipes-container"); c.innerHTML = "";
+    recipes.forEach((r, i) => {
+        let div = document.createElement("div"); div.className = "recipe";
+        let info = document.createElement("div"); info.innerHTML = `<strong>${r.result.count}x ${items[r.result.id].name}</strong><br><span class="recipe-reqs">Req: ` + r.reqs.map(req => `${req.count} ${items[req.id].name}`).join(", ") + `</span>`;
+        let btn = document.createElement("button"); btn.className = "craft-btn"; btn.innerText = "Fabricar"; btn.disabled = !canCraft(r); btn.onclick = () => craft(i);
+        div.appendChild(info); div.appendChild(btn); c.appendChild(div);
+    });
+}
+
+window.addEventListener("mousemove", e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
+window.addEventListener("mousedown", e => {
+    if(isCatEventActive && musicGato.paused) musicGato.play().catch(()=>{});
+    if(isCraftingOpen) return;
+    
+    if (e.button === 0) {
+        let wmx = mouse.x + camera.x, wmy = mouse.y + camera.y;
+        let clickedEntity = false;
+
+        for (let i = entities.length - 1; i >= 0; i--) {
+            let ent = entities[i];
+            if (wmx >= ent.x && wmx <= ent.x + ent.width && wmy >= ent.y && wmy <= ent.y + ent.height) {
+                let dist = Math.sqrt(Math.pow(wmx - (player.x + player.width/2), 2) + Math.pow(wmy - (player.y + player.height/2), 2));
+                if (dist < 150) { 
+                    let heldItem = inventory[selectedSlot].id;
+                    let damage = (heldItem === 10) ? 3 : ((heldItem===7||heldItem===8) ? 2 : 1);
+                    
+                    if(isTesterMode) damage = 999; // One hit kill en modo tester
+                    
+                    ent.hp -= damage;
+                    ent.dy = -4; 
+                    ent.x += (ent.x > player.x) ? 10 : -10; 
+
+                    if(ent.hp <= 0) entities.splice(i, 1);
+                    clickedEntity = true; break;
+                }
+            }
+        }
+        if (clickedEntity) return; 
+        mouse.isDown = true; 
+    }
+
+    if (e.button === 2) { 
+        let wx = Math.floor((mouse.x + camera.x) / TILE), wy = Math.floor((mouse.y + camera.y) / TILE);
+        let dist = Math.sqrt(Math.pow(wx*TILE - player.x, 2) + Math.pow(wy*TILE - player.y, 2));
+        let heldItem = inventory[selectedSlot].id;
+
+        if (wy>=0 && wy<WORLD_HEIGHT && wx>=0 && wx<WORLD_WIDTH && dist<250) {
+            if (world[wy][wx] === 0 && heldItem !== 0 && items[heldItem].isBlock) {
+                let col = getCollisions(player.x, player.y, player.width, player.height);
+                if (col.length === 0 || (Math.floor(player.x/TILE) !== wx || Math.floor(player.y/TILE) !== wy)) {
+                    world[wy][wx] = heldItem; 
+                    
+                    // En Modo tester no es gasta el bloc
+                    if(!isTesterMode) {
+                        inventory[selectedSlot].count--;
+                        if(inventory[selectedSlot].count <= 0) inventory[selectedSlot].id = 0;
+                    }
+                    updateUI();
+                }
+            }
+        }
+    }
+});
+
+window.addEventListener("mouseup", e => { if (e.button === 0) mouse.isDown = false; });
+
+document.addEventListener("keydown", e => {
+    let key = e.key.toLowerCase(); keys[key] = true;
+    if (key >= "1" && key <= "9") { selectedSlot = parseInt(key) - 1; updateUI(); }
+    if (key === "e") toggleCrafting();
+    if (key === "g") { localStorage.setItem("minroger_v6", JSON.stringify({ world, inventory, entities, px: player.x, py: player.y, hp: player.hp })); alert("Guardado"); }
+    if (key === "c") {
+        let save = localStorage.getItem("minroger_v6");
+        if (save) { let data = JSON.parse(save); world = data.world; inventory = data.inventory; entities = data.entities || []; player.x = data.px; player.y = data.py; player.hp = data.hp || 10; updateUI(); updateHealthUI(); alert("Cargado"); }
+    }
+});
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+function drawBackground() {
+    let bgX = (camera.x * 0.2) % canvas.width;
+    let bgImg = isCatEventActive ? images.cielogato : images.cielo; 
+    
+    ctx.drawImage(bgImg, -bgX, 0, canvas.width, canvas.height);
+    ctx.drawImage(bgImg, canvas.width - bgX, 0, canvas.width, canvas.height);
+}
+
+function drawWorld() {
+    let startX = Math.max(0, Math.floor(camera.x / TILE)), endX = Math.min(WORLD_WIDTH, Math.floor((camera.x + canvas.width) / TILE) + 1);
+    let startY = Math.max(0, Math.floor(camera.y / TILE)), endY = Math.min(WORLD_HEIGHT, Math.floor((camera.y + canvas.height) / TILE) + 1);
+
+    for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+            let blockId = world[y][x];
+            if (blockId !== 0) {
+                let drawX = x * TILE - camera.x, drawY = y * TILE - camera.y;
+                ctx.drawImage(images[items[blockId].key], drawX, drawY, TILE, TILE);
+                
+                if (mining.active && mining.x === x && mining.y === y && !isTesterMode) {
+                    ctx.fillStyle = `rgba(0, 0, 0, ${(mining.progress / mining.required) * 0.7})`;
+                    ctx.fillRect(drawX, drawY, TILE, TILE);
+                }
+            }
+        }
+    }
+}
+
+function drawEntities() {
+    entities.forEach(e => {
+        let drawX = e.x - camera.x, drawY = e.y - camera.y;
+        if (drawX + e.width < 0 || drawX > canvas.width || drawY + e.height < 0 || drawY > canvas.height) return;
+        ctx.save();
+        if (e.facingLeft) { ctx.translate(drawX + e.width, drawY); ctx.scale(-1, 1); drawX = 0; drawY = 0; }
+        if(e.hp < (e.type==='nomo'?4:e.type==='aldeano'?10:e.type==='cerdo'?2:1)) ctx.globalAlpha = 0.8; 
+        ctx.drawImage(images[e.type], drawX, drawY, e.width, e.height);
+        ctx.restore();
+    });
+}
+
+function drawPlayer() {
+    let drawX = player.x - camera.x, drawY = player.y - camera.y;
+    ctx.save();
+    
+    // Si està en Mode Tester, se li posa un efecte brillant daurat al fons del personatge
+    if(isTesterMode) {
+        ctx.shadowColor = "gold";
+        ctx.shadowBlur = 15;
+    }
+    
+    if(player.invuln > 0 && Math.floor(Date.now() / 100) % 2 === 0) ctx.globalAlpha = 0.5;
+    if (player.facingLeft) { ctx.translate(drawX + player.width, drawY); ctx.scale(-1, 1); drawX = 0; drawY = 0; }
+    ctx.drawImage(images.jugador, drawX, drawY, player.width, player.height);
+    
+    let heldItem = inventory[selectedSlot].id;
+    if (heldItem !== 0) { ctx.drawImage(images[items[heldItem].key], drawX + player.width - 15, drawY + player.height / 2 - 10, 24, 24); }
+    ctx.restore();
+}
+
+function initUI() {
+    const c = document.getElementById('ui-container'); c.innerHTML = "";
+    for (let i = 0; i < 9; i++) {
+        let div = document.createElement('div'); div.className = 'hotbar-slot'; div.id = `slot-${i}`;
+        if (i === selectedSlot) div.classList.add('active');
+        let num = document.createElement('span'); num.className = 'hotbar-number'; num.innerText = i + 1; div.appendChild(num);
+        let img = document.createElement('img'); img.id = `img-${i}`; div.appendChild(img);
+        let count = document.createElement('span'); count.className = 'item-count'; count.id = `count-${i}`; div.appendChild(count);
+        c.appendChild(div);
+    }
+    updateUI(); updateHealthUI();
+}
+
+function updateUI() {
+    for (let i = 0; i < 9; i++) {
+        let slotDiv = document.getElementById(`slot-${i}`); let img = document.getElementById(`img-${i}`); let count = document.getElementById(`count-${i}`);
+        slotDiv.className = i === selectedSlot ? 'hotbar-slot active' : 'hotbar-slot';
+        let itemInfo = inventory[i];
+        if (itemInfo.id !== 0) { img.src = imageSrcs[items[itemInfo.id].key]; img.style.display = "block"; count.innerText = itemInfo.count > 1 ? itemInfo.count : ""; } 
+        else { img.style.display = "none"; count.innerText = ""; }
+    }
+}
+
+function initGame() { generateWorld(); initUI(); gameLoop(); }
+
+function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    updatePlayer();
+    updateEntities(); 
+    updateMining();
+    updateCamera();
+    
+    drawBackground();
+    drawWorld();
+    drawEntities(); 
+    drawPlayer();
+    
+    requestAnimationFrame(gameLoop);
+}
+</script>
+</body>
+</html>
